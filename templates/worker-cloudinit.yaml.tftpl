@@ -1,0 +1,28 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - curl
+users:
+  - name: cluster
+    ssh-authorized-keys:
+      - ${ssh_authorized_key}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+write_files:
+  - path: /root/.ssh/id_rsa
+    content: |
+      ${indent(6, ssh_private_key)}
+    permissions: "0600"
+runcmd:
+  - apt-get update -y
+  - # wait for the master node to be ready by trying to connect to it
+  - until curl -k https://${master_private_ip}:6443; do sleep 5; done
+  - # copy the token from the master node
+  - REMOTE_TOKEN=$(ssh -o StrictHostKeyChecking=accept-new cluster@${master_private_ip} sudo cat /var/lib/rancher/k3s/server/node-token)
+  - # Install k3s worker
+  - curl -sfL https://get.k3s.io | K3S_URL=https://${master_private_ip}:6443 K3S_TOKEN=$REMOTE_TOKEN sh -
+  - # Label the node as a worker
+  - SSH_CLIENT_HOSTNAME=$(hostname | tr '[:upper:]' '[:lower:]')
+  - sleep 60
+  - ssh -o StrictHostKeyChecking=accept-new cluster@${master_private_ip} "kubectl label node $SSH_CLIENT_HOSTNAME node-role.kubernetes.io/worker=worker"
